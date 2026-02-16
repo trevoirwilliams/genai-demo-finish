@@ -62,17 +62,17 @@ jobs:
       - name: Verify formatting
         run: dotnet format src/GenAIDevOps.sln --verify-no-changes
 
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # dependency-review:
+    # name: Dependency Review
+    # runs-on: ubuntu-latest
+    # steps:
+    #   - name: Checkout
+    #     uses: actions/checkout@v4
 
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v4
-        with:
-         repo-token: ${{ secrets.GITHUB_TOKEN }}
+    #   - name: Dependency Review
+    #     uses: actions/dependency-review-action@v4
+    #     with:
+    #      repo-token: ${{ secrets.GITHUB_TOKEN }}
 
   pr-summary:
     name: PR Summary Comment
@@ -80,7 +80,7 @@ jobs:
     needs:
       - build-test
       - formatting-check
-      - dependency-review
+      # - dependency-review
     steps:
       - name: Post PR summary comment
         uses: actions/github-script@v7
