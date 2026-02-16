@@ -43,8 +43,7 @@ jobs:
             nuget-${{ runner.os }}-
 
       - name: Restore
-        # Use explicit configuration to avoid implicit defaults and improve determinism.
-        run: dotnet restore src/GenAIDevOps.sln --configuration Release
+        run: dotnet restore src/GenAIDevOps.sln
 
       - name: Build
         # Enable deterministic CI builds for repeatable outputs.
