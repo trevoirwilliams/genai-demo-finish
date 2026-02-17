@@ -32,7 +32,7 @@ app.MapGet("/version", () =>
         environment = app.Environment.EnvironmentName,
         timestamp = DateTime.UtcNow
     });
-}); 
+});
 
 app.Run();
 
