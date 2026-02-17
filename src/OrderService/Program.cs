@@ -34,7 +34,6 @@ app.MapGet("/version", () =>
     });
 });
 
-
 app.Run();
 
 public sealed record HealthResponse(string Status);
