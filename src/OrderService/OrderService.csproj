@@ -5,6 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+  
+  <PropertyGroup>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SharedKernel\SharedKernel.csproj" />
