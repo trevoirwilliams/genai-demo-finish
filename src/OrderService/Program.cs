@@ -5,7 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 var app = builder.Build();
 
-app.MapGet("/health", () => Results.BadRequest(HealthEndpoints.GetHealthResponse()));
+app.MapGet("/health", () => Results.Ok(HealthEndpoints.GetHealthResponse()));
 
 app.MapGet("/api/orders", () =>
 {
@@ -40,5 +40,5 @@ public sealed record HealthResponse(string Status);
 
 public static class HealthEndpoints
 {
-    public static HealthResponse GetHealthResponse() => new("ok");
+    public static HealthResponse GetHealthResponse() => new("badrequest");
 }
