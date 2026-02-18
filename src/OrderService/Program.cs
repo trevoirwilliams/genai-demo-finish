@@ -5,7 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 var app = builder.Build();
 
-app.MapGet("/health", () => Results.Ok(HealthEndpoints.GetHealthResponse()));
+app.MapGet("/health", () => Results.BadRequest(HealthEndpoints.GetHealthResponse()));
 
 app.MapGet("/api/orders", () =>
 {
