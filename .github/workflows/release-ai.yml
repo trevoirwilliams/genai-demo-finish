@@ -92,7 +92,7 @@ jobs:
           name: release-input
 
       - name: Generate release notes via reusable action
-        uses: ./.github/actions/azure-openai-chat
+        uses: ./.github/azure-openai-chat
         with:
           endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
