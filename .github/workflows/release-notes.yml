@@ -16,7 +16,6 @@ jobs:
       metadata: ${{ steps.extract.outputs.metadata }}
     steps:
       - uses: actions/checkout@v4
-
       - name: Collect merged pull request metadata
         id: extract
         uses: actions/github-script@v7
@@ -68,6 +67,8 @@ jobs:
   generate-release-notes:
     needs: collect-metadata
     runs-on: ubuntu-latest
+    environment:
+      name: devops-dev
     outputs:
       output_file: release-notes.md
     steps:
