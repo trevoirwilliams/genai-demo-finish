@@ -83,7 +83,6 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: devops-dev
-
     steps:
       - uses: actions/checkout@v4
 
@@ -92,53 +91,17 @@ jobs:
         with:
           name: release-input
 
-      - name: Generate release notes with Azure OpenAI
-        env:
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
-        run: |
-          set -euo pipefail
-
-          # Mask the key so it can't leak in logs
-          echo "::add-mask::${AZURE_OPENAI_API_KEY}"
-
-          # Fail early if env secrets aren't present
-          [[ -n "${AZURE_OPENAI_ENDPOINT}" ]] || (echo "Missing AZURE_OPENAI_ENDPOINT" && exit 1)
-          [[ -n "${AZURE_OPENAI_API_KEY}" ]] || (echo "Missing AZURE_OPENAI_API_KEY" && exit 1)
-          [[ -n "${AZURE_OPENAI_DEPLOYMENT}" ]] || (echo "Missing AZURE_OPENAI_DEPLOYMENT" && exit 1)
-
-          SYSTEM_PROMPT="$(cat ai/prompts/release-notes.prompt.md)"
-          USER_INPUT="$(cat release-report.json)"
-
-          BODY="$(jq -n \
-            --arg system "$SYSTEM_PROMPT" \
-            --arg user "$USER_INPUT" \
-            '{
-              messages: [
-                {role:"system", content:$system},
-                {role:"user", content:$user}
-              ],
-              temperature: 0.1
-            }')"
-
-          RESPONSE_FILE="aoai.response.json"
-
-          http_code=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
-            -X POST \
-            "${AZURE_OPENAI_ENDPOINT}/openai/deployments/${AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version=2024-02-15-preview" \
-            -H "Content-Type: application/json" \
-            -H "api-key: ${AZURE_OPENAI_API_KEY}" \
-            -d "$BODY" || true)
-
-          if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
-            echo "Azure OpenAI call failed with HTTP $http_code"
-            cat "$RESPONSE_FILE" | jq -c '.' || true
-            exit 1
-          fi
-
-          jq -r '.choices[0].message.content // empty' "$RESPONSE_FILE" > release-notes.md
-          test -s release-notes.md
+      - name: Generate release notes via reusable action
+        uses: ./.github/actions/azure-openai-chat
+        with:
+          endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          deployment: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+          api_version: "2024-02-15-preview"
+          system_prompt_file: "ai/prompts/release-notes.prompt.md"
+          user_input_file: "release-report.json"
+          output_file: "release-notes.md"
+          temperature: "0.1"
 
       - name: Upload release output artifact
         uses: actions/upload-artifact@v4
@@ -147,6 +110,7 @@ jobs:
           path: |
             release-report.json
             release-notes.md
+            .aoai.response.json
 
   validate-release-notes:
     name: Validate deterministic contract

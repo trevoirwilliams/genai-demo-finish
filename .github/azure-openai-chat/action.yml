@@ -1,0 +1,109 @@
+name: "Azure OpenAI Chat Completion"
+description: "Calls Azure OpenAI chat completions endpoint and writes the assistant message to a file."
+
+inputs:
+  endpoint:
+    description: "Azure OpenAI endpoint (e.g., https://xxxx.openai.azure.com)"
+    required: true
+  api_key:
+    description: "Azure OpenAI API Key"
+    required: true
+  deployment:
+    description: "Azure OpenAI deployment name"
+    required: true
+  api_version:
+    description: "Azure OpenAI API version"
+    required: false
+    default: "2024-02-15-preview"
+  system_prompt_file:
+    description: "Path to system prompt text/markdown file"
+    required: true
+  user_input_file:
+    description: "Path to user input file (usually JSON)"
+    required: true
+  output_file:
+    description: "Path to write model output (markdown/text)"
+    required: false
+    default: "release-notes.md"
+  temperature:
+    description: "Model temperature (0.0-2.0). Lower is more deterministic."
+    required: false
+    default: "0.1"
+
+outputs:
+  response_path:
+    description: "Path to raw response JSON file"
+    value: ${{ steps.call.outputs.response_path }}
+  output_path:
+    description: "Path to generated output file"
+    value: ${{ steps.call.outputs.output_path }}
+  http_status:
+    description: "HTTP status code from Azure OpenAI"
+    value: ${{ steps.call.outputs.http_status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate inputs and dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v jq >/dev/null 2>&1 || (echo "jq is required but not installed." && exit 1)
+
+        [[ -f "${{ inputs.system_prompt_file }}" ]] || (echo "System prompt file not found: ${{ inputs.system_prompt_file }}" && exit 1)
+        [[ -f "${{ inputs.user_input_file }}" ]] || (echo "User input file not found: ${{ inputs.user_input_file }}" && exit 1)
+
+        [[ -n "${{ inputs.endpoint }}" ]] || (echo "Missing endpoint input" && exit 1)
+        [[ -n "${{ inputs.api_key }}" ]] || (echo "Missing api_key input" && exit 1)
+        [[ -n "${{ inputs.deployment }}" ]] || (echo "Missing deployment input" && exit 1)
+
+    - name: Call Azure OpenAI
+      id: call
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Mask key so it won't appear in logs
+        echo "::add-mask::${{ inputs.api_key }}"
+
+        SYSTEM_PROMPT="$(cat "${{ inputs.system_prompt_file }}")"
+        USER_INPUT="$(cat "${{ inputs.user_input_file }}")"
+
+        BODY="$(jq -n \
+          --arg system "$SYSTEM_PROMPT" \
+          --arg user "$USER_INPUT" \
+          --argjson temp "${{ inputs.temperature }}" \
+          '{
+            messages: [
+              {role:"system", content:$system},
+              {role:"user", content:$user}
+            ],
+            temperature: $temp
+          }')"
+
+        RESPONSE_FILE=".aoai.response.json"
+        OUTPUT_FILE="${{ inputs.output_file }}"
+
+        http_code=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+          -X POST \
+          "${{ inputs.endpoint }}/openai/deployments/${{ inputs.deployment }}/chat/completions?api-version=${{ inputs.api_version }}" \
+          -H "Content-Type: application/json" \
+          -H "api-key: ${{ inputs.api_key }}" \
+          -d "$BODY" || true)
+
+        echo "http_status=$http_code" >> "$GITHUB_OUTPUT"
+        echo "response_path=$RESPONSE_FILE" >> "$GITHUB_OUTPUT"
+        echo "output_path=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+
+        if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+          echo "Azure OpenAI call failed with HTTP $http_code"
+          # Print compact JSON error if present (safe; key is masked)
+          jq -c '.' "$RESPONSE_FILE" || true
+          exit 1
+        fi
+
+        jq -r '.choices[0].message.content // empty' "$RESPONSE_FILE" > "$OUTPUT_FILE"
+        if [[ ! -s "$OUTPUT_FILE" ]]; then
+          echo "Azure OpenAI returned empty output."
+          exit 1
+        fi
