@@ -119,7 +119,15 @@ jobs:
 
       - name: Validate structure
         run: |
+          set -euo pipefail
           test -s release-notes.md
+
+          # Rule: allow either a single "- None" output OR full required structure.
+          normalized="$(sed 's/\r$//' release-notes.md | sed '/^[[:space:]]*$/d')"
+          if printf "%s\n" "$normalized" | grep -Eq '^-\s*None$' && [ "$(printf "%s\n" "$normalized" | wc -l)" -eq 1 ]; then
+            exit 0
+          fi
+
           grep -q "^## Features" release-notes.md
           grep -q "^## Fixes" release-notes.md
           grep -q "^## Infrastructure" release-notes.md
