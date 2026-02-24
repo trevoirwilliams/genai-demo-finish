@@ -1,0 +1,196 @@
+name: Release Notes (AI)
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  collect-metadata:
+    name: Collect PR metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect merged pull request metadata
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const commits = context.payload.commits ?? [];
+            const prsByNumber = new Map();
+
+            for (const commit of commits) {
+              const associatedPrs = await github.paginate(
+                github.rest.repos.listPullRequestsAssociatedWithCommit,
+                {
+                  owner,
+                  repo,
+                  commit_sha: commit.id,
+                  per_page: 100,
+                }
+              );
+
+              for (const pr of associatedPrs) {
+                if (!pr.merged_at) continue;
+                if (pr.base?.ref !== 'main') continue;
+
+                if (!prsByNumber.has(pr.number)) {
+                  prsByNumber.set(pr.number, {
+                    number: pr.number,
+                    title: pr.title,
+                    labels: (pr.labels ?? []).map(l => l.name),
+                    author: pr.user?.login ?? null,
+                    body: pr.body ?? '',
+                    merged_at: pr.merged_at,
+                    html_url: pr.html_url,
+                  });
+                }
+              }
+            }
+
+            const report = {
+              generated_at: new Date().toISOString(),
+              repository: `${owner}/${repo}`,
+              push: {
+                before: context.payload.before ?? null,
+                after: context.payload.after ?? null,
+                ref: context.payload.ref ?? null,
+                commit_count: commits.length,
+              },
+              pull_requests: Array.from(prsByNumber.values()),
+            };
+
+            fs.writeFileSync('release-report.json', JSON.stringify(report, null, 2));
+            core.info(`Wrote release-report.json with ${report.pull_requests.length} merged PR(s).`);
+
+      - name: Upload release input artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-input
+          path: release-report.json
+
+  generate-release-notes:
+    name: Generate release notes (Azure OpenAI)
+    needs: collect-metadata
+    runs-on: ubuntu-latest
+    environment:
+      name: devops-dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release input artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-input
+
+      - name: Generate release notes with Azure OpenAI
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+        run: |
+          set -euo pipefail
+
+          # Mask the key so it can't leak in logs
+          echo "::add-mask::${AZURE_OPENAI_API_KEY}"
+
+          # Fail early if env secrets aren't present
+          [[ -n "${AZURE_OPENAI_ENDPOINT}" ]] || (echo "Missing AZURE_OPENAI_ENDPOINT" && exit 1)
+          [[ -n "${AZURE_OPENAI_API_KEY}" ]] || (echo "Missing AZURE_OPENAI_API_KEY" && exit 1)
+          [[ -n "${AZURE_OPENAI_DEPLOYMENT}" ]] || (echo "Missing AZURE_OPENAI_DEPLOYMENT" && exit 1)
+
+          SYSTEM_PROMPT="$(cat ai/prompts/release-notes.prompt.md)"
+          USER_INPUT="$(cat release-report.json)"
+
+          BODY="$(jq -n \
+            --arg system "$SYSTEM_PROMPT" \
+            --arg user "$USER_INPUT" \
+            '{
+              messages: [
+                {role:"system", content:$system},
+                {role:"user", content:$user}
+              ],
+              temperature: 0.1
+            }')"
+
+          RESPONSE_FILE="aoai.response.json"
+
+          http_code=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST \
+            "${AZURE_OPENAI_ENDPOINT}/openai/deployments/${AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version=2024-02-15-preview" \
+            -H "Content-Type: application/json" \
+            -H "api-key: ${AZURE_OPENAI_API_KEY}" \
+            -d "$BODY" || true)
+
+          if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+            echo "Azure OpenAI call failed with HTTP $http_code"
+            cat "$RESPONSE_FILE" | jq -c '.' || true
+            exit 1
+          fi
+
+          jq -r '.choices[0].message.content // empty' "$RESPONSE_FILE" > release-notes.md
+          test -s release-notes.md
+
+      - name: Upload release output artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-output
+          path: |
+            release-report.json
+            release-notes.md
+
+  validate-release-notes:
+    name: Validate deterministic contract
+    needs: generate-release-notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release output artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-output
+
+      - name: Validate headings + bullets
+        run: |
+          set -euo pipefail
+          test -s release-notes.md
+
+          grep -q "^## Features" release-notes.md
+          grep -q "^## Fixes" release-notes.md
+          grep -q "^## Infrastructure" release-notes.md
+          grep -q "^## Breaking Changes" release-notes.md
+
+          # Ensure each section has at least one bullet.
+          awk '
+            /^## /{h=$0; c=0; next}
+            /^- /{c++}
+            /^## /{ if (h != "" && c == 0) { print "No bullets under " h; exit 1 } }
+            END{ if (h != "" && c == 0) { print "No bullets under " h; exit 1 } }
+          ' release-notes.md
+
+  publish-release:
+    name: Publish draft GitHub Release
+    needs: validate-release-notes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release output artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-output
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release-notes.md
+          draft: true
+          tag_name: v0.1.${{ github.run_number }}

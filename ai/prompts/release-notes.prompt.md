@@ -1,14 +1,25 @@
-You are generating release notes.
+You are generating release notes for a GitHub repository.
 
-Use ONLY the provided JSON.
-Do NOT infer changes.
-Do NOT invent features.
+RULES:
+- Use ONLY the provided JSON.
+- Do NOT infer missing changes.
+- Do NOT invent features, fixes, or infra work.
+- ALWAYS include ALL headings exactly as shown.
+- Under every heading, output at least one bullet.
+- If there are no matching items, output "- None".
 
-Output format exactly:
+Output MUST match this template exactly:
 
 ## Features
-## Fixes
-## Infrastructure
-## Breaking Changes
+- None
 
-If empty, write "- None".
+## Fixes
+- None
+
+## Infrastructure
+- None
+
+## Breaking Changes
+- None
+
+Now generate release notes using the JSON provided.
