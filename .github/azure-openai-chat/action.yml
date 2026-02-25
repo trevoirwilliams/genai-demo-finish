@@ -40,6 +40,18 @@ outputs:
   http_status:
     description: "HTTP status code from Azure OpenAI"
     value: ${{ steps.call.outputs.http_status }}
+  duration_seconds:
+    description: "Duration of the successful model call in seconds"
+    value: ${{ steps.call.outputs.duration_seconds }}
+  total_tokens:
+    description: "Total tokens used (prompt + completion)"
+    value: ${{ steps.call.outputs.total_tokens }}
+  prompt_tokens:
+    description: "Prompt tokens used"
+    value: ${{ steps.call.outputs.prompt_tokens }}
+  completion_tokens:
+    description: "Completion tokens used"
+    value: ${{ steps.call.outputs.completion_tokens }}
 
 runs:
   using: "composite"
@@ -76,6 +88,8 @@ runs:
         echo "User input size: ${INPUT_SIZE} bytes"
 
         MAX_INPUT_BYTES=25000
+        DURATION=0
+        http_code=0
 
         if [ "$INPUT_SIZE" -gt "$MAX_INPUT_BYTES" ]; then
           echo "Input exceeds ${MAX_INPUT_BYTES} bytes. Refusing to call model."
@@ -147,6 +161,11 @@ runs:
         echo "Prompt tokens: $PROMPT_TOKENS"
         echo "Completion tokens: $COMPLETION_TOKENS"
         echo "Total tokens: $TOTAL_TOKENS"
+
+        echo "duration_seconds=${DURATION}" >> "$GITHUB_OUTPUT"
+        echo "total_tokens=${TOTAL_TOKENS}" >> "$GITHUB_OUTPUT"
+        echo "prompt_tokens=${PROMPT_TOKENS}" >> "$GITHUB_OUTPUT"
+        echo "completion_tokens=${COMPLETION_TOKENS}" >> "$GITHUB_OUTPUT"
 
         cat <<EOF > ai-telemetry.json
         {

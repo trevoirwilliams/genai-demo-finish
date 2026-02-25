@@ -103,6 +103,7 @@ jobs:
           name: release-input
 
       - name: Generate release notes via reusable action
+        id: aoai
         uses: ./.github/azure-openai-chat
         with:
           endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
@@ -113,6 +114,54 @@ jobs:
           user_input_file: "release-report.json"
           output_file: "release-notes.md"
           temperature: "0.1"
+
+      - name: AI budget + performance warnings (annotations)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Soft thresholds (warn only). Tune per org.
+          MAX_TOKENS=2000
+          MAX_DURATION=10
+
+          TOKENS="${{ steps.aoai.outputs.total_tokens }}"
+          DURATION="${{ steps.aoai.outputs.duration_seconds }}"
+
+          echo "Total tokens: ${TOKENS}"
+          echo "Duration (s): ${DURATION}"
+
+          # If outputs missing for any reason, don't fail the pipeline here.
+          if [[ -z "${TOKENS}" || -z "${DURATION}" ]]; then
+            echo "::warning::AI telemetry outputs missing; check action.yml outputs."
+            exit 0
+          fi
+
+          if [[ "${TOKENS}" -gt "${MAX_TOKENS}" ]]; then
+            echo "::warning::AI token usage (${TOKENS}) exceeded soft budget (${MAX_TOKENS}). Consider reducing metadata size or tightening truncation."
+          fi
+
+          if [[ "${DURATION}" -gt "${MAX_DURATION}" ]]; then
+            echo "::warning::AI call duration (${DURATION}s) exceeded soft threshold (${MAX_DURATION}s). Potential latency regression."
+          fi
+
+      - name: Publish AI telemetry summary (Job Summary)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## AI Telemetry Summary"
+            echo ""
+            echo "- HTTP status: ${{ steps.aoai.outputs.http_status }}"
+            echo "- Duration (seconds): ${{ steps.aoai.outputs.duration_seconds }}"
+            echo "- Total tokens: ${{ steps.aoai.outputs.total_tokens }}"
+            echo "- Prompt tokens: ${{ steps.aoai.outputs.prompt_tokens }}"
+            echo "- Completion tokens: ${{ steps.aoai.outputs.completion_tokens }}"
+            echo ""
+            echo "### Notes"
+            echo "- If token or duration warnings appear above, tune truncation (Lesson 5) or thresholds (Lesson 7)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release output artifact
         uses: actions/upload-artifact@v4
