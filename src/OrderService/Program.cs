@@ -13,6 +13,7 @@ app.MapGet("/api/orders", () =>
     {
         new("ORD-1001", "Pending", 125.00m),
         new("ORD-1002", "Shipped", 89.50m),
+        new("ORD-1002", "Shipped", 89.50m),
         new("ORD-1003", "Delivered", 42.25m)
     };
 
