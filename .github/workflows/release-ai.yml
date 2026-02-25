@@ -12,6 +12,8 @@ jobs:
   collect-metadata:
     name: Collect PR metadata
     runs-on: ubuntu-latest
+    outputs:
+      pr_count: ${{ steps.extract.outputs.pr_count }}
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +78,9 @@ jobs:
             fs.writeFileSync('release-report.json', JSON.stringify(report, null, 2));
             core.info(`Wrote release-report.json with ${report.pull_requests.length} merged PR(s).`);
 
+            const prCount = report.pull_requests.length;
+            core.setOutput('pr_count', String(prCount));
+
       - name: Upload release input artifact
         uses: actions/upload-artifact@v4
         with:
@@ -84,6 +89,7 @@ jobs:
 
   generate-release-notes:
     name: Generate release notes (Azure OpenAI)
+    if: needs.collect-metadata.outputs.pr_count != '0'
     needs: collect-metadata
     runs-on: ubuntu-latest
     environment:
@@ -116,10 +122,18 @@ jobs:
             release-report.json
             release-notes.md
             .aoai.response.json
+            ai-telemetry.json
+            
+      - name: Upload AI telemetry artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-telemetry
+          path: ai-telemetry.json
 
   validate-release-notes:
     name: Validate deterministic contract
-    needs: generate-release-notes
+    needs: [collect-metadata, generate-release-notes]
+    if: needs.collect-metadata.outputs.pr_count != '0'
     runs-on: ubuntu-latest
     steps:
       - name: Download release output artifact
@@ -147,7 +161,8 @@ jobs:
 
   publish-release:
     name: Publish draft GitHub Release
-    needs: validate-release-notes
+    needs: [collect-metadata, validate-release-notes]
+    if: needs.collect-metadata.outputs.pr_count != '0'
     runs-on: ubuntu-latest
     permissions:
       contents: write

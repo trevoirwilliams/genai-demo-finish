@@ -97,26 +97,65 @@ runs:
         RESPONSE_FILE=".aoai.response.json"
         OUTPUT_FILE="${{ inputs.output_file }}"
 
-        http_code=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
-          -X POST \
-          "${{ inputs.endpoint }}/openai/deployments/${{ inputs.deployment }}/chat/completions?api-version=${{ inputs.api_version }}" \
-          -H "Content-Type: application/json" \
-          -H "api-key: ${{ inputs.api_key }}" \
-          -d "$BODY" || true)
+        MAX_RETRIES=3
+        ATTEMPT=1
+        SLEEP_SECONDS=2
 
-        echo "http_status=$http_code" >> "$GITHUB_OUTPUT"
-        echo "response_path=$RESPONSE_FILE" >> "$GITHUB_OUTPUT"
-        echo "output_path=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
+        while true; do
+          START_TIME=$(date +%s)
 
-        if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
-          echo "Azure OpenAI call failed with HTTP $http_code"
-          # Print compact JSON error if present (safe; key is masked)
-          jq -c '.' "$RESPONSE_FILE" || true
-          exit 1
-        fi
+          http_code=$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
+            -X POST \
+            "${{ inputs.endpoint }}/openai/deployments/${{ inputs.deployment }}/chat/completions?api-version=${{ inputs.api_version }}" \
+            -H "Content-Type: application/json" \
+            -H "api-key: ${{ inputs.api_key }}" \
+            -d "$BODY" || true)
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo "Model call duration: ${DURATION}s"
+
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            break
+          fi
+
+          if [[ "$ATTEMPT" -ge "$MAX_RETRIES" ]]; then
+            echo "Azure OpenAI call failed after ${ATTEMPT} attempts (HTTP $http_code)"
+            jq -c '.' "$RESPONSE_FILE" || true
+            exit 1
+          fi
+
+          echo "Retry ${ATTEMPT}/${MAX_RETRIES} after ${SLEEP_SECONDS}s (HTTP $http_code)"
+          sleep "$SLEEP_SECONDS"
+
+          ATTEMPT=$((ATTEMPT + 1))
+          SLEEP_SECONDS=$((SLEEP_SECONDS * 2))
+        done
+
 
         jq -r '.choices[0].message.content // empty' "$RESPONSE_FILE" > "$OUTPUT_FILE"
         if [[ ! -s "$OUTPUT_FILE" ]]; then
           echo "Azure OpenAI returned empty output."
           exit 1
         fi
+
+        PROMPT_TOKENS=$(jq -r '.usage.prompt_tokens // 0' "$RESPONSE_FILE")
+        COMPLETION_TOKENS=$(jq -r '.usage.completion_tokens // 0' "$RESPONSE_FILE")
+        TOTAL_TOKENS=$(jq -r '.usage.total_tokens // 0' "$RESPONSE_FILE")
+
+        echo "Prompt tokens: $PROMPT_TOKENS"
+        echo "Completion tokens: $COMPLETION_TOKENS"
+        echo "Total tokens: $TOTAL_TOKENS"
+
+        cat <<EOF > ai-telemetry.json
+        {
+          "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+          "prompt_size_bytes": ${PROMPT_SIZE},
+          "input_size_bytes": ${INPUT_SIZE},
+          "duration_seconds": ${DURATION},
+          "http_status": ${http_code},
+          "prompt_tokens": ${PROMPT_TOKENS},
+          "completion_tokens": ${COMPLETION_TOKENS},
+          "total_tokens": ${TOTAL_TOKENS}
+        }
