@@ -162,6 +162,7 @@ runs:
         echo "Completion tokens: $COMPLETION_TOKENS"
         echo "Total tokens: $TOTAL_TOKENS"
 
+        echo "http_status=${http_code}" >> "$GITHUB_OUTPUT"
         echo "duration_seconds=${DURATION}" >> "$GITHUB_OUTPUT"
         echo "total_tokens=${TOTAL_TOKENS}" >> "$GITHUB_OUTPUT"
         echo "prompt_tokens=${PROMPT_TOKENS}" >> "$GITHUB_OUTPUT"
