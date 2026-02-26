@@ -163,7 +163,7 @@ jobs:
             echo "- If token or duration warnings appear above, tune truncation (Lesson 5) or thresholds (Lesson 7)."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload release output artifact
+      - name: Upload release output artifact1
         uses: actions/upload-artifact@v4
         with:
           name: release-output
