@@ -26,7 +26,6 @@ jobs:
         id: pr
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -57,34 +56,49 @@ jobs:
             echo '{}' > chatops-input.json
           fi
 
-      - name: Validate required AI settings
-        shell: bash
-        env:
-          ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
-        run: |
-          set -euo pipefail
-          [[ -n "${ENDPOINT}" ]] || (echo "Missing secret: AZURE_OPENAI_ENDPOINT" && exit 1)
-          [[ -n "${API_KEY}" ]] || (echo "Missing secret: AZURE_OPENAI_API_KEY" && exit 1)
-          [[ -n "${DEPLOYMENT}" ]] || (echo "Missing secret: AZURE_OPENAI_DEPLOYMENT" && exit 1)
-
       - name: Generate AI response
         id: ai
+        continue-on-error: true
         uses: ./.github/azure-openai-chat
         with:
           endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
           deployment: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+          api_version: "2024-02-15-preview"
           system_prompt_file: "ai/prompts/chatops.prompt.md"
           user_input_file: "chatops-input.json"
           output_file: "chatops-output.md"
           temperature: "0.1"
 
+      - name: Debug Azure OpenAI failure details
+        if: always() && steps.ai.outcome == 'failure'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::warning::Azure OpenAI step failed. Printing sanitized diagnostics."
+          if [[ -f .aoai.response.json ]]; then
+            STATUS=$(jq -r '.statusCode // .status // empty' .aoai.response.json)
+            ERROR_CODE=$(jq -r '.error.code // empty' .aoai.response.json)
+            ERROR_MESSAGE=$(jq -r '.error.message // empty' .aoai.response.json)
+
+            [[ -n "$STATUS" ]] && echo "HTTP status: $STATUS" || echo "HTTP status: (not present in body)"
+            [[ -n "$ERROR_CODE" ]] && echo "Error code: $ERROR_CODE" || echo "Error code: (not present)"
+            [[ -n "$ERROR_MESSAGE" ]] && echo "Error message: $ERROR_MESSAGE" || echo "Error message: (not present)"
+          else
+            echo "No .aoai.response.json found; failure likely occurred before API response was written."
+          fi
+
+      - name: Fail job when AI step fails
+        if: always() && steps.ai.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Failing job because Generate AI response step failed."
+          exit 1
+
       - name: Post response to PR
+        if: steps.ai.outcome == 'success'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             const body = fs.readFileSync('chatops-output.md', 'utf8');
