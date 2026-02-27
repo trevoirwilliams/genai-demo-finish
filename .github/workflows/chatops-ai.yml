@@ -45,7 +45,7 @@ jobs:
               'chatops-input.json',
               JSON.stringify(report, null, 2)
             );
-
+ 
       - name: Generate AI response
         id: ai
         uses: ./.github/azure-openai-chat
