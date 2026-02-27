@@ -21,4 +21,3 @@ dotnet test
 - Policies
 - Scripts
 - Prompts
-- Docs
