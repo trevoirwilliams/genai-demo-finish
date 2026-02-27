@@ -3,8 +3,8 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": { "value": "eastus" },
-    "environmentName": { "value": "genai-devops-dev-env" },
-    "acrName": { "value": "genai-devops-dev-acr" },
-    "logAnalyticsName": { "value": "genai-devops-dev-law" }
+    "environmentName": { "value": "genai-devops-dev-env-trev" },
+    "acrName": { "value": "genai-devops-dev-acr-trev" },
+    "logAnalyticsName": { "value": "genai-devops-dev-law-trev" }
   }
 }
