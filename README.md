@@ -20,4 +20,4 @@ dotnet test
 - Workflows
 - Policies
 - Scripts
-- Prompts
+- Prompt Text
