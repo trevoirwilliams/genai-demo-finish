@@ -19,10 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Extract PR metadata
         id: pr
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const prNumber = context.payload.issue.number;
             const { data: pr } = await github.rest.pulls.get({
@@ -45,6 +49,26 @@ jobs:
               JSON.stringify(report, null, 2)
             );
 
+      - name: Ensure ChatOps input file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f chatops-input.json ]]; then
+            echo '{}' > chatops-input.json
+          fi
+
+      - name: Validate required AI settings
+        shell: bash
+        env:
+          ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+        run: |
+          set -euo pipefail
+          [[ -n "${ENDPOINT}" ]] || (echo "Missing secret: AZURE_OPENAI_ENDPOINT" && exit 1)
+          [[ -n "${API_KEY}" ]] || (echo "Missing secret: AZURE_OPENAI_API_KEY" && exit 1)
+          [[ -n "${DEPLOYMENT}" ]] || (echo "Missing secret: AZURE_OPENAI_DEPLOYMENT" && exit 1)
+
       - name: Generate AI response
         id: ai
         uses: ./.github/azure-openai-chat
@@ -60,6 +84,7 @@ jobs:
       - name: Post response to PR
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             const body = fs.readFileSync('chatops-output.md', 'utf8');
