@@ -21,5 +21,3 @@ dotnet test
 - Policies
 - Scripts
 - Prompts
-- Docs
-- Sample code changes to demonstrate AI-assisted code generation and editing
