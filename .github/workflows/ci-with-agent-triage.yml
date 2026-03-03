@@ -17,27 +17,23 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      # 1) Run tests and intentionally allow the workflow to continue so we can triage.
       - name: Run tests (capture log)
         id: tests
         continue-on-error: true
         run: |
+          set -o pipefail
           mkdir -p artifacts
-          # Capture console output to a log file for the agent.
-          dotnet test --configuration Release | tee artifacts/failure.log
+          dotnet test src/GenAIDevOps.sln --configuration Release 2>&1 | tee artifacts/failure.log
 
-      # 2) Run the file-based agent only if the test step failed.
       - name: Run agent triage (analyze failure.log)
         if: ${{ steps.tests.outcome == 'failure' }}
         run: |
-          # Use --file to force file-based execution even if a csproj exists in repo.
-          dotnet run --file .ai/agents/DevOpsFailureTriageAgent.cs -- ./artifacts/failure.log
+          dotnet run --file ai/agents/DevOpsFailureTriageAgent.cs -- ./artifacts/failure.log
         env:
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
 
-      # 3) Upload the log no matter what (so you can inspect it later).
       - name: Upload triage artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -46,7 +42,6 @@ jobs:
           path: artifacts/
           if-no-files-found: warn
 
-      # 4) Ensure the workflow run is marked as FAILED if tests failed.
       - name: Fail job if tests failed
         if: ${{ steps.tests.outcome == 'failure' }}
         run: exit 1
