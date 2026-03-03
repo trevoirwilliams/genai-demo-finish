@@ -21,6 +21,8 @@ app.MapGet("/api/orders", () =>
     return Results.Ok(orders);
 });
 
+app.MapGet("/api/users", () => Results.Ok(UserEndpoints.GetSampleUsers()));
+
 app.MapGet("/version", () =>
 {
     var version = typeof(Program).Assembly
@@ -43,4 +45,16 @@ public sealed record HealthResponse(string Status);
 public static class HealthEndpoints
 {
     public static HealthResponse GetHealthResponse() => new("ok");
+}
+
+public sealed record UserResponse(int Id, string Name, string Email);
+
+public static class UserEndpoints
+{
+    public static IReadOnlyList<UserResponse> GetSampleUsers() =>
+    [
+        new(1, "Alice Johnson", "alice.johnson@example.com"),
+        new(2, "Bob Smith", "bob.smith@example.com"),
+        new(3, "Charlie Lee", "charlie.lee@example.com")
+    ];
 }
