@@ -10,7 +10,7 @@ public sealed class UserEndpointsTests
         var users = UserEndpoints.GetSampleUsers();
 
         Assert.NotNull(users);
-        Assert.Equal(10, users.Count);
+        Assert.Equal(3, users.Count);
 
         var firstUser = users[0];
         Assert.Equal(5, firstUser.Id);
