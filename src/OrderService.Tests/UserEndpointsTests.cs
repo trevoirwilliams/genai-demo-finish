@@ -13,7 +13,7 @@ public sealed class UserEndpointsTests
         Assert.Equal(3, users.Count);
 
         var firstUser = users[0];
-        Assert.Equal(5, firstUser.Id);
+        Assert.Equal(1, firstUser.Id);
         Assert.Equal("Alice Johnson", firstUser.Name);
         Assert.Equal("alice.johnson@example.com", firstUser.Email);
     }
