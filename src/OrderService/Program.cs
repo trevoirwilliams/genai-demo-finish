@@ -10,6 +10,7 @@ app.MapGet("/hello", () => Results.Ok("Hello World!!!"));
 
 app.MapGet("/api/orders", () =>
 {
+    Task.Delay(500).Wait(); // Simulate some processing delay
     var orders = new List<OrderDto>
     {
         new("ORD-1001", "Pending", 125.00m),
@@ -47,14 +48,14 @@ public static class HealthEndpoints
     public static HealthResponse GetHealthResponse() => new("ok");
 }
 
-public sealed record UserResponse(int Id, string Name, string Email);
+public sealed record UserResponse(int Id, string Name, string Email, string Password);
 
 public static class UserEndpoints
 {
     public static IReadOnlyList<UserResponse> GetSampleUsers() =>
     [
-        new(1, "Alice Johnson", "alice.johnson@example.com"),
-        new(2, "Bob Smith", "bob.smith@example.com"),
-        new(3, "Charlie Lee", "charlie.lee@example.com")
+        new(1, "Alice Johnson", "alice.johnson@example.com", "Password123!"),
+        new(2, "Bob Smith", "bob.smith@example.com", "Password123!"),
+        new(3, "Charlie Lee", "charlie.lee@example.com", "Password123!")
     ];
 }
