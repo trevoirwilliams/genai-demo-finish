@@ -17,8 +17,6 @@ jobs:
   analyze-pr-diff:
     name: Analyze PR Diff
     runs-on: ubuntu-latest
-    environment:
-      name: devops-dev
     outputs:
       overall-risk: ${{ steps.extract.outputs.overall_risk }}
       confidence: ${{ steps.extract.outputs.confidence }}
