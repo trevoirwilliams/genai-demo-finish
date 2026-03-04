@@ -26,7 +26,7 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
     ?? throw new InvalidOperationException("Set AZURE_OPENAI_API_KEY");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
-    ?? "gpt-4o-mini";
+    ?? "gpt-4o-mini"; 
 
 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
