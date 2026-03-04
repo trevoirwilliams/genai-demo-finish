@@ -1,7 +1,7 @@
 name: PR Diff AI Analysis
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -36,17 +36,13 @@ jobs:
 
       - name: Build PR diff
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
 
-          if [ "${{ github.event_name }}" = "pull_request_target" ]; then
-            curl -fsSL \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3.diff" \
-              "${{ github.event.pull_request.diff_url }}" > artifacts/pr.diff
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --prune --depth=1 origin "${{ github.base_ref }}"
+            git diff --unified=3 --minimal "origin/${{ github.base_ref }}...${{ github.sha }}" > artifacts/pr.diff
           else
             git diff --unified=3 --minimal HEAD~1...HEAD > artifacts/pr.diff
           fi
@@ -95,7 +91,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upsert PR comment
-        if: ${{ github.event_name == 'pull_request_target' }}
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -144,7 +140,7 @@ jobs:
     name: Risk Gate
     runs-on: ubuntu-latest
     needs: analyze-pr-diff
-    if: ${{ github.event_name == 'pull_request_target' }}
+    if: ${{ github.event_name == 'pull_request' }}
     steps:
       - name: Fail on high-risk findings
         shell: bash
