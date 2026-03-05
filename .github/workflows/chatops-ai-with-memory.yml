@@ -115,6 +115,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          for f in chatops-pr.json chatops-command.json chatops-memory.json; do
+            if [ ! -f "$f" ]; then
+              echo "Required input file missing: $f"
+              echo "Workspace files:"
+              ls -la
+              exit 1
+            fi
+          done
+
           jq -s '.[0] + .[1] + .[2]' chatops-pr.json chatops-command.json chatops-memory.json > chatops-input.json
 
  
