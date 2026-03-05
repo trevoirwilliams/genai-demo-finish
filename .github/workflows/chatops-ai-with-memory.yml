@@ -42,7 +42,7 @@ jobs:
             };
 
             require('fs').writeFileSync(
-              'chatops-input.json',
+              'chatops-pr.json',
               JSON.stringify(report, null, 2)
             );
 
