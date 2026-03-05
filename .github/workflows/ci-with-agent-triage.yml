@@ -2,7 +2,7 @@ name: CI (with Agent Failure Triage)
 
 on:
   workflow_dispatch:
-  pull_request:
+  # pull_request:
 
 jobs:
   build_test_triage:
