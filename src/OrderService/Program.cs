@@ -8,6 +8,8 @@ var app = builder.Build();
 app.MapGet("/health", () => Results.Ok(HealthEndpoints.GetHealthResponse()));
 app.MapGet("/hello", () => Results.Ok("Hello World!!!"));
 
+app.MapGet("/hello", () => Results.Ok("Hello World!!!"));
+
 app.MapGet("/api/orders", () =>
 {
     var orders = new List<OrderDto>
