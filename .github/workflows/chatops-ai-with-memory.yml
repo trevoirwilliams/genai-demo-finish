@@ -147,17 +147,22 @@ jobs:
           set -euo pipefail
 
           # Extract the LAST ```json ...``` block from the output.
-          # The prompt guarantees a JSON block at the end.
-          awk '
+          # If missing or invalid, fall back to an empty memory_writes payload.
+          if awk '
             BEGIN { inblock=0; block=""; }
             /^```json/ { inblock=1; block=""; next }
             /^```/ && inblock==1 { inblock=0; last=block; next }
             { if (inblock==1) block = block $0 "\n" }
             END { if (length(last)==0) exit 2; print last }
-          ' chatops-output.md > memory-candidate.json
-
-          # Validate it's JSON and contains memory_writes array
-          jq -e '.memory_writes and (.memory_writes | type=="array")' memory-candidate.json >/dev/null
+          ' chatops-output.md > memory-candidate.json; then
+            if ! jq -e '.memory_writes and (.memory_writes | type=="array")' memory-candidate.json >/dev/null; then
+              echo 'Extracted JSON did not contain memory_writes array; using empty fallback.'
+              jq -n '{ memory_writes: [] }' > memory-candidate.json
+            fi
+          else
+            echo 'No fenced JSON memory block found; using empty fallback.'
+            jq -n '{ memory_writes: [] }' > memory-candidate.json
+          fi
 
           # Output a compact version for later steps
           jq -c '.' memory-candidate.json > memory-candidate.compact.json
