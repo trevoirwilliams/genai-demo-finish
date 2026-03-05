@@ -135,7 +135,7 @@ jobs:
           endpoint: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           api_key: ${{ secrets.AZURE_OPENAI_API_KEY }}
           deployment: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
-          system_prompt_file: "ai/prompts/chatops.prompt.md"
+          system_prompt_file: "ai/prompts/chatops.memory.prompt.md"
           user_input_file: "chatops-input.json"
           output_file: "chatops-output.md"
           temperature: "0.1"
