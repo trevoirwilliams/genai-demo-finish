@@ -17,10 +17,6 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 
-// ----------------------------
-// Inputs / environment
-// Azure OpenAI provider guidance is part of Agent Framework docs.
-// ----------------------------
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT");
 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
