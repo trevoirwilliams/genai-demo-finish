@@ -6,7 +6,6 @@ var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(HealthEndpoints.GetHealthResponse()));
-app.MapGet("/hello", () => Results.Ok("Hello World!!!"));
 
 app.MapGet("/api/orders", () =>
 {
@@ -15,7 +14,8 @@ app.MapGet("/api/orders", () =>
         new("ORD-1001", "Pending", 125.00m),
         new("ORD-1002", "Shipped", 89.50m),
         new("ORD-1003", "Shipped", 89.50m),
-        new("ORD-1004", "Delivered", 42.25m)
+        new("ORD-1004", "Shipped", 89.50m),
+        new("ORD-1005", "Delivered", 42.25m)
     };
 
     return Results.Ok(orders);
