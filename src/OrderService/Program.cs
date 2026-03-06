@@ -27,6 +27,8 @@ app.MapGet("/api/users", () => Results.Ok(UserEndpoints.GetSampleUsers()));
 
 app.MapGet("/api/products", () => Results.Ok(ProductEndpoints.GetProductNames()));
 
+app.MapGet("/api/cart", () => Results.Ok(CartEndpoints.GetSampleCart()));
+
 app.MapGet("/version", () =>
 {
     var version = typeof(Program).Assembly
@@ -72,5 +74,20 @@ public static class ProductEndpoints
         "Mouse",
         "Monitor",
         "Headset"
+    ];
+}
+
+public sealed record CartItemResponse(string ProductName, int Quantity, decimal UnitPrice)
+{
+    public decimal LineTotal => Quantity * UnitPrice;
+}
+
+public static class CartEndpoints
+{
+    public static IReadOnlyList<CartItemResponse> GetSampleCart() =>
+    [
+        new("Laptop", 1, 999.00m),
+        new("Mouse", 2, 24.99m),
+        new("Headset", 1, 79.50m)
     ];
 }
