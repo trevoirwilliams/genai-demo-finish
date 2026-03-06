@@ -19,6 +19,7 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using OpenAI.Chat;
+using ModelContextProtocol.Client;
 
 // ----------------------------
 // Environment / inputs
@@ -37,6 +38,7 @@ var owner = Environment.GetEnvironmentVariable("MCP_PR_OWNER")
 
 var repo = Environment.GetEnvironmentVariable("MCP_PR_REPO")
     ?? throw new InvalidOperationException("Set MCP_PR_REPO");
+<<<<<<< feature/add-mcp-server
 
 var prNumberText = Environment.GetEnvironmentVariable("MCP_PR_NUMBER")
     ?? throw new InvalidOperationException("Set MCP_PR_NUMBER");
@@ -60,6 +62,24 @@ using var prFilesDoc = await GitHubMcp.ListPullRequestFilesAsync(
     cts.Token);
 
 DiffTools.InitializeFromPullRequestFiles(prFilesDoc.RootElement);
+=======
+
+var prNumberText = Environment.GetEnvironmentVariable("MCP_PR_NUMBER")
+    ?? throw new InvalidOperationException("Set MCP_PR_NUMBER");
+
+if (!int.TryParse(prNumberText, out var prNumber))
+    throw new InvalidOperationException("MCP_PR_NUMBER must be an integer.");
+
+using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+
+var mcpClient = await CreateMcpClientAsync(cts.Token);
+using var prFilesDoc = await GitHubMcp.ListPullRequestFilesAsync(mcpClient, owner, repo, prNumber, cts.Token);
+
+DiffTools.InitializeFromPullRequestFiles(prFilesDoc.RootElement);
+
+var syntheticDiff = BuildSyntheticUnifiedDiff(prFilesDoc.RootElement);
+var optimizedDiff = DiffContextOptimizer.BuildOptimizedContext(syntheticDiff);
+>>>>>>> main
 var fileInventory = DiffTools.ListChangedFiles(maxFiles: 250);
 var highRiskCandidates = DiffTools.GetTopRiskyFiles(maxFiles: 20);
 
@@ -154,10 +174,103 @@ catch (Exception ex)
     }, new JsonSerializerOptions { WriteIndented = true }));
 }
 
+<<<<<<< feature/add-mcp-server
 // ----------------------------
 // MCP helpers
 // ----------------------------
 static async Task<McpClient> CreateMcpClientAsync(CancellationToken ct)
+=======
+static async Task<IMcpClient> CreateMcpClientAsync(CancellationToken ct)
+{
+    var serverProject = Environment.GetEnvironmentVariable("MCP_SERVER_PROJECT")
+        ?? "mcp/DevOps.McpServer";
+
+    return await McpClientFactory.CreateAsync(
+        new StdioClientTransport(new()
+        {
+            Name = "DevOps MCP Server",
+            Command = "dotnet",
+            Arguments = ["run", "--project", serverProject]
+        }),
+        cancellationToken: ct);
+}
+
+static string BuildSyntheticUnifiedDiff(JsonElement files)
+{
+    var blocks = new List<string>();
+
+    foreach (var file in files.EnumerateArray())
+    {
+        var filePath = file.GetProperty("filename").GetString() ?? "unknown";
+        var patch = file.TryGetProperty("patch", out var patchEl) ? patchEl.GetString() ?? "" : "";
+
+        if (string.IsNullOrWhiteSpace(patch))
+            continue;
+
+        blocks.Add($"""
+        diff --git a/{filePath} b/{filePath}
+        --- a/{filePath}
+        +++ b/{filePath}
+        {patch}
+        """);
+    }
+
+    return string.Join("\n", blocks);
+}
+
+static class GitHubMcp
+{
+    public static async Task<JsonDocument> GetPullRequestAsync(
+        IMcpClient client,
+        string owner,
+        string repo,
+        int number,
+        CancellationToken ct)
+    {
+        var result = await client.CallToolAsync(
+            "github_get_pull_request",
+            new Dictionary<string, object?>
+            {
+                ["owner"] = owner,
+                ["repo"] = repo,
+                ["number"] = number
+            },
+            cancellationToken: ct);
+
+        var raw = string.Join(
+            "\n",
+            result.Content.Select(c => c.ToString()));
+
+        return JsonDocument.Parse(raw);
+    }
+
+    public static async Task<JsonDocument> ListPullRequestFilesAsync(
+        IMcpClient client,
+        string owner,
+        string repo,
+        int number,
+        CancellationToken ct)
+    {
+        var result = await client.CallToolAsync(
+            "github_list_pull_request_files",
+            new Dictionary<string, object?>
+            {
+                ["owner"] = owner,
+                ["repo"] = repo,
+                ["number"] = number
+            },
+            cancellationToken: ct);
+
+        var raw = string.Join(
+            "\n",
+            result.Content.Select(c => c.ToString()));
+
+        return JsonDocument.Parse(raw);
+    }
+}
+
+static class DiffContextOptimizer
+>>>>>>> main
 {
     var serverProject = Environment.GetEnvironmentVariable("MCP_SERVER_PROJECT")
         ?? "mcp/DevOps.McpServer";
@@ -393,15 +506,24 @@ static class DiffTools
         }
     }
 
+<<<<<<< feature/add-mcp-server
     [Description("Get the cached diff patch for a single file path from the pull request files response.")]
     public static string GetFileDiff(
         [Description("Exact file path as returned by ListChangedFiles.")] string filePath,
         [Description("Maximum characters to return.")] int maxChars = 12000)
+=======
+    [Description("Get the cached diff patch for a single file path from the PR files response.")]
+    public static string GetFileDiff(
+    [Description("Exact file path as returned by ListChangedFiles.")]
+    string filePath,
+    [Description("Maximum characters to return.")]
+    int maxChars = 12000)
+>>>>>>> main
     {
         if (string.IsNullOrWhiteSpace(filePath))
-        {
             return "{\"error\":\"filePath is required\"}";
-        }
+
+        FileDiffEntry? entry;
 
         FileDiffEntry? entry;
 
@@ -414,6 +536,7 @@ static class DiffTools
         if (entry is null)
         {
             return SerializeToolPayloadWithCap(
+<<<<<<< feature/add-mcp-server
                 new
                 {
                     error = "file not found in PR",
@@ -427,6 +550,17 @@ static class DiffTools
             return SerializeToolPayloadWithCap(
                 new
                 {
+=======
+                new { error = "file not found in PR", requestedFile = filePath },
+                "GetFileDiff");
+        }
+
+        if (string.IsNullOrWhiteSpace(entry.DiffText))
+        {
+            return SerializeToolPayloadWithCap(
+                new
+                {
+>>>>>>> main
                     file = entry.FilePath,
                     addedLines = entry.AddedLines,
                     removedLines = entry.RemovedLines,
@@ -480,6 +614,10 @@ static class DiffTools
             : truncatedSerialized[..MaxResponseChars];
     }
 
+<<<<<<< feature/add-mcp-server
+=======
+    
+>>>>>>> main
     private static int EstimateRiskScore(string filePath, int addedLines, int removedLines, int hunkCount)
     {
         var score = addedLines + removedLines + (hunkCount * 3);
