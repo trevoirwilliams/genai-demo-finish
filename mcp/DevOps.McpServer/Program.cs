@@ -11,7 +11,7 @@ var builder = Host.CreateApplicationBuilder(args);
 // IMPORTANT: keep stdout clean for JSON-RPC (stdio). Log to stderr.
 builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
-var githubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+var githubToken = Environment.GetEnvironmentVariable("PR_ANALYSIS_TOKEN");
 
 builder.Services.AddSingleton(new GitHubAuthOptions(githubToken));
 builder.Services.AddSingleton<GitHubTooling>();

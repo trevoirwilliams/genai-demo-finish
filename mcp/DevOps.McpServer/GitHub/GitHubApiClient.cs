@@ -10,7 +10,7 @@ public sealed class GitHubApiClient(HttpClient http, GitHubAuthOptions auth, ILo
     {
         if (string.IsNullOrWhiteSpace(auth.Token))
             throw new InvalidOperationException(
-                "GITHUB_TOKEN is not set. Configure a GitHub token before calling GitHub tools.");
+                "PR_ANALYSIS_TOKEN is not set. Configure a GitHub token before calling GitHub tools.");
     }
 
     public async Task<JsonElement> GetJson(string relativeUrl, CancellationToken ct)
