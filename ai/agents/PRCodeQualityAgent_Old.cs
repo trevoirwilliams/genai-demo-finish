@@ -9,7 +9,6 @@
 #:package Azure.Identity@1.13.2
 #:package Microsoft.Agents.AI.OpenAI@1.0.0-rc1
 #:package Microsoft.Extensions.AI@10.3.0
-#:package ModelContextProtocol@1.0.0
 
 using System.ComponentModel;
 using System.Text.Json;
@@ -17,7 +16,6 @@ using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
-using ModelContextProtocol.Client;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT");
@@ -26,27 +24,15 @@ var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
     ?? "gpt-4o-mini"; 
 
-var owner = Environment.GetEnvironmentVariable("MCP_PR_OWNER")
-    ?? throw new InvalidOperationException("Set MCP_PR_OWNER");
-
-var repo = Environment.GetEnvironmentVariable("MCP_PR_REPO")
-    ?? throw new InvalidOperationException("Set MCP_PR_REPO");
-
-var prNumberText = Environment.GetEnvironmentVariable("MCP_PR_NUMBER")
-    ?? throw new InvalidOperationException("Set MCP_PR_NUMBER");
-
-if (!int.TryParse(prNumberText, out var prNumber))
-    throw new InvalidOperationException("MCP_PR_NUMBER must be an integer.");
-
 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
-var mcpClient = await CreateMcpClientAsync(cts.Token);
-using var prFilesDoc = await GitHubMcp.ListPullRequestFilesAsync(mcpClient, owner, repo, prNumber, cts.Token);
+var diffPath = args.Length > 0 ? args[0] : "pr.diff";
+var diffContent = File.Exists(diffPath)
+    ? await File.ReadAllTextAsync(diffPath, cts.Token)
+        : throw new FileNotFoundException($"Diff file not found: {diffPath}");
 
-DiffTools.InitializeFromPullRequestFiles(prFilesDoc.RootElement);
-
-var syntheticDiff = BuildSyntheticUnifiedDiff(prFilesDoc.RootElement);
-var optimizedDiff = DiffContextOptimizer.BuildOptimizedContext(syntheticDiff);
+DiffTools.Initialize(diffContent);
+var optimizedDiff = DiffContextOptimizer.BuildOptimizedContext(diffContent);
 var fileInventory = DiffTools.ListChangedFiles(maxFiles: 250);
 var highRiskCandidates = DiffTools.GetTopRiskyFiles(maxFiles: 20);
 
@@ -71,7 +57,7 @@ var prompt =
 $"""
 Analyze this pull request diff for code quality risks.
 
-You already have a compact file inventory and high-risk candidates.
+You already have an optimized global diff excerpt and file inventory.
 If you need deeper context, use tools to fetch only targeted file diffs.
 Prefer focused retrieval to minimize tokens while preserving accuracy.
 
@@ -93,6 +79,10 @@ Do not include markdown.
 
 --- HIGH RISK CANDIDATES (JSON) ---
 {highRiskCandidates}
+
+--- BEGIN DIFF ---
+{optimizedDiff}
+--- END DIFF ---
 """;
 
 var response = await agent.RunAsync(prompt, cancellationToken: cts.Token);
@@ -135,95 +125,6 @@ catch (Exception ex)
         },
         confidence = 0.0
     }, new JsonSerializerOptions { WriteIndented = true }));
-}
-
-static async Task<IMcpClient> CreateMcpClientAsync(CancellationToken ct)
-{
-    var serverProject = Environment.GetEnvironmentVariable("MCP_SERVER_PROJECT")
-        ?? "mcp/DevOps.McpServer";
-
-    return await McpClientFactory.CreateAsync(
-        new StdioClientTransport(new()
-        {
-            Name = "DevOps MCP Server",
-            Command = "dotnet",
-            Arguments = ["run", "--project", serverProject]
-        }),
-        cancellationToken: ct);
-}
-
-static string BuildSyntheticUnifiedDiff(JsonElement files)
-{
-    var blocks = new List<string>();
-
-    foreach (var file in files.EnumerateArray())
-    {
-        var filePath = file.GetProperty("filename").GetString() ?? "unknown";
-        var patch = file.TryGetProperty("patch", out var patchEl) ? patchEl.GetString() ?? "" : "";
-
-        if (string.IsNullOrWhiteSpace(patch))
-            continue;
-
-        blocks.Add($"""
-        diff --git a/{filePath} b/{filePath}
-        --- a/{filePath}
-        +++ b/{filePath}
-        {patch}
-        """);
-    }
-
-    return string.Join("\n", blocks);
-}
-
-static class GitHubMcp
-{
-    public static async Task<JsonDocument> GetPullRequestAsync(
-        IMcpClient client,
-        string owner,
-        string repo,
-        int number,
-        CancellationToken ct)
-    {
-        var result = await client.CallToolAsync(
-            "github_get_pull_request",
-            new Dictionary<string, object?>
-            {
-                ["owner"] = owner,
-                ["repo"] = repo,
-                ["number"] = number
-            },
-            cancellationToken: ct);
-
-        var raw = string.Join(
-            "\n",
-            result.Content.Select(c => c.ToString()));
-
-        return JsonDocument.Parse(raw);
-    }
-
-    public static async Task<JsonDocument> ListPullRequestFilesAsync(
-        IMcpClient client,
-        string owner,
-        string repo,
-        int number,
-        CancellationToken ct)
-    {
-        var result = await client.CallToolAsync(
-            "github_list_pull_request_files",
-            new Dictionary<string, object?>
-            {
-                ["owner"] = owner,
-                ["repo"] = repo,
-                ["number"] = number
-            },
-            cancellationToken: ct);
-
-        var raw = string.Join(
-            "\n",
-            result.Content.Select(c => c.ToString()));
-
-        return JsonDocument.Parse(raw);
-    }
 }
 
 static class DiffContextOptimizer
@@ -303,7 +204,7 @@ static class ResponseValidator
 
         _ = GetRequiredString(root, "summary");
 
-        var overallRisk = GetRequiredString(root, "overallRisk").ToLowerInvariant();
+        var overallRisk = GetRequiredString(root, "overallRisk");
         if (!AllowedOverallRisk.Contains(overallRisk))
         {
             throw new InvalidOperationException($"overallRisk must be one of: {string.Join('|', AllowedOverallRisk)}.");
@@ -325,13 +226,13 @@ static class ResponseValidator
             _ = GetRequiredString(issue, "description");
             _ = GetRequiredString(issue, "suggestedFix");
 
-            var severity = GetRequiredString(issue, "severity").ToLowerInvariant();
+            var severity = GetRequiredString(issue, "severity");
             if (!AllowedSeverity.Contains(severity))
             {
                 throw new InvalidOperationException($"issue.severity must be one of: {string.Join('|', AllowedSeverity)}.");
             }
 
-            var category = GetRequiredString(issue, "category").ToLowerInvariant();
+            var category = GetRequiredString(issue, "category");
             if (!AllowedCategory.Contains(category))
             {
                 throw new InvalidOperationException($"issue.category must be one of: {string.Join('|', AllowedCategory)}.");
@@ -385,7 +286,7 @@ static class ResponseValidator
             throw new InvalidOperationException($"{property} must be a non-empty string.");
         }
 
-        return text.Trim();
+        return text.Trim().ToLowerInvariant();
     }
 }
 
@@ -396,29 +297,11 @@ static class DiffTools
     private static List<FileDiffEntry> _entries = [];
     private static readonly JsonSerializerOptions CompactJson = new() { WriteIndented = false };
 
-    public static void InitializeFromPullRequestFiles(JsonElement files)
+    public static void Initialize(string rawDiff)
     {
         lock (SyncRoot)
         {
-            _entries = [];
-
-            foreach (var file in files.EnumerateArray())
-            {
-                var filePath = file.GetProperty("filename").GetString() ?? "unknown";
-                var addedLines = file.TryGetProperty("additions", out var additions) ? additions.GetInt32() : 0;
-                var removedLines = file.TryGetProperty("deletions", out var deletions) ? deletions.GetInt32() : 0;
-                var patch = file.TryGetProperty("patch", out var patchEl) ? patchEl.GetString() ?? "" : "";
-                var hunkCount = patch.Split('\n').Count(l => l.StartsWith("@@", StringComparison.Ordinal));
-                var estimatedRiskScore = EstimateRiskScore(filePath, addedLines, removedLines, hunkCount);
-
-                _entries.Add(new FileDiffEntry(
-                    filePath,
-                    patch,
-                    addedLines,
-                    removedLines,
-                    hunkCount,
-                    estimatedRiskScore));
-            }
+            _entries = ParseEntries(rawDiff);
         }
     }
 
@@ -466,54 +349,36 @@ static class DiffTools
         }
     }
 
-    [Description("Get the cached diff patch for a single file path from the PR files response.")]
+    [Description("Get the full unified diff block for a single file path from the PR diff.")]
     public static string GetFileDiff(
-    [Description("Exact file path as returned by ListChangedFiles.")]
-    string filePath,
-    [Description("Maximum characters to return.")]
-    int maxChars = 12000)
+        [Description("Exact file path as returned by ListChangedFiles, e.g. src/OrderService/Program.cs.")] string filePath,
+        [Description("Maximum characters to return.")] int maxChars = 12000)
     {
         if (string.IsNullOrWhiteSpace(filePath))
+        {
             return "{\"error\":\"filePath is required\"}";
-
-        FileDiffEntry? entry;
+        }
 
         lock (SyncRoot)
         {
-            entry = _entries.FirstOrDefault(item =>
+            var entry = _entries.FirstOrDefault(item =>
                 item.FilePath.Equals(filePath.Trim(), StringComparison.OrdinalIgnoreCase));
-        }
 
-        if (entry is null)
-        {
-            return SerializeToolPayloadWithCap(
-                new { error = "file not found in PR", requestedFile = filePath },
-                "GetFileDiff");
-        }
-
-        if (string.IsNullOrWhiteSpace(entry.DiffText))
-        {
-            return SerializeToolPayloadWithCap(
-                new
+            if (entry is null)
+            {
+                return SerializeToolPayloadWithCap(new
                 {
-                    file = entry.FilePath,
-                    addedLines = entry.AddedLines,
-                    removedLines = entry.RemovedLines,
-                    hunkCount = entry.HunkCount,
-                    estimatedRiskScore = entry.EstimatedRiskScore,
-                    diffUnavailable = true,
-                    reason = "GitHub did not provide patch content for this file in the pull request files response."
-                },
-                "GetFileDiff");
-        }
+                    error = "file not found in diff",
+                    requestedFile = filePath
+                }, "GetFileDiff");
+            }
 
-        var boundedChars = Math.Clamp(maxChars, 1_000, MaxResponseChars);
-        var body = entry.DiffText.Length <= boundedChars
-            ? entry.DiffText
-            : entry.DiffText[..boundedChars] + "\n[...truncated...]";
+            var boundedChars = Math.Clamp(maxChars, 1_000, MaxResponseChars);
+            var body = entry.DiffText.Length <= boundedChars
+                ? entry.DiffText
+                : entry.DiffText[..boundedChars] + "\n[...truncated...]";
 
-        return SerializeToolPayloadWithCap(
-            new
+            return SerializeToolPayloadWithCap(new
             {
                 file = entry.FilePath,
                 addedLines = entry.AddedLines,
@@ -521,8 +386,8 @@ static class DiffTools
                 hunkCount = entry.HunkCount,
                 estimatedRiskScore = entry.EstimatedRiskScore,
                 diff = body
-            },
-            "GetFileDiff");
+            }, "GetFileDiff");
+        }
     }
 
     private static string SerializeToolPayloadWithCap(object payload, string source)
@@ -549,7 +414,76 @@ static class DiffTools
             : truncatedSerialized[..MaxResponseChars];
     }
 
-    
+    private static List<FileDiffEntry> ParseEntries(string rawDiff)
+    {
+        if (string.IsNullOrWhiteSpace(rawDiff))
+        {
+            return [];
+        }
+
+        var normalized = rawDiff.Replace("\r\n", "\n");
+        var blocks = SplitDiffBlocks(normalized);
+        var parsed = new List<FileDiffEntry>(blocks.Count);
+
+        foreach (var block in blocks)
+        {
+            var lines = block.Split('\n', StringSplitOptions.None);
+            var header = lines.FirstOrDefault(line => line.StartsWith("diff --git ", StringComparison.Ordinal));
+            var filePath = ExtractFilePath(header) ?? "unknown";
+
+            var addedLines = lines.Count(line => line.StartsWith("+", StringComparison.Ordinal) && !line.StartsWith("+++", StringComparison.Ordinal));
+            var removedLines = lines.Count(line => line.StartsWith("-", StringComparison.Ordinal) && !line.StartsWith("---", StringComparison.Ordinal));
+            var hunkCount = lines.Count(line => line.StartsWith("@@", StringComparison.Ordinal));
+            var estimatedRiskScore = EstimateRiskScore(filePath, addedLines, removedLines, hunkCount);
+
+            parsed.Add(new FileDiffEntry(filePath, block, addedLines, removedLines, hunkCount, estimatedRiskScore));
+        }
+
+        return parsed;
+    }
+
+    private static List<string> SplitDiffBlocks(string normalizedDiff)
+    {
+        var lines = normalizedDiff.Split('\n', StringSplitOptions.None);
+        var blocks = new List<string>();
+        var current = new List<string>();
+
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("diff --git ", StringComparison.Ordinal) && current.Count > 0)
+            {
+                blocks.Add(string.Join('\n', current));
+                current.Clear();
+            }
+
+            current.Add(line);
+        }
+
+        if (current.Count > 0)
+        {
+            blocks.Add(string.Join('\n', current));
+        }
+
+        return blocks;
+    }
+
+    private static string? ExtractFilePath(string? diffHeader)
+    {
+        if (string.IsNullOrWhiteSpace(diffHeader))
+        {
+            return null;
+        }
+
+        var parts = diffHeader.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 4)
+        {
+            return null;
+        }
+
+        var right = parts[3];
+        return right.StartsWith("b/", StringComparison.Ordinal) ? right[2..] : right;
+    }
+
     private static int EstimateRiskScore(string filePath, int addedLines, int removedLines, int hunkCount)
     {
         var score = addedLines + removedLines + (hunkCount * 3);
