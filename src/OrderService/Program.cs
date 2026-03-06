@@ -25,6 +25,8 @@ app.MapGet("/api/orders", () =>
 
 app.MapGet("/api/users", () => Results.Ok(UserEndpoints.GetSampleUsers()));
 
+app.MapGet("/api/products", () => Results.Ok(ProductEndpoints.GetProductNames()));
+
 app.MapGet("/version", () =>
 {
     var version = typeof(Program).Assembly
@@ -58,5 +60,17 @@ public static class UserEndpoints
         new(1, "Alice Johnson", "alice.johnson@example.com", "Password123!"),
         new(2, "Bob Smith", "bob.smith@example.com", "Password123!"),
         new(3, "Charlie Lee", "charlie.lee@example.com", "Password123!")
+    ];
+}
+
+public static class ProductEndpoints
+{
+    public static IReadOnlyList<string> GetProductNames() =>
+    [
+        "Laptop",
+        "Keyboard",
+        "Mouse",
+        "Monitor",
+        "Headset"
     ];
 }

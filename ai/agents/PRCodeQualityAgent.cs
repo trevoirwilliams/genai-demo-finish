@@ -16,15 +16,21 @@ using System.Text.Json;
 using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using OpenAI.Chat;
 
+// ----------------------------
+// Environment / inputs
+// ----------------------------
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("Set AZURE_OPENAI_ENDPOINT");
+
 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
     ?? throw new InvalidOperationException("Set AZURE_OPENAI_API_KEY");
+
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
-    ?? "gpt-4o-mini"; 
+    ?? "gpt-4o-mini";
 
 var owner = Environment.GetEnvironmentVariable("MCP_PR_OWNER")
     ?? throw new InvalidOperationException("Set MCP_PR_OWNER");
@@ -36,23 +42,35 @@ var prNumberText = Environment.GetEnvironmentVariable("MCP_PR_NUMBER")
     ?? throw new InvalidOperationException("Set MCP_PR_NUMBER");
 
 if (!int.TryParse(prNumberText, out var prNumber))
+{
     throw new InvalidOperationException("MCP_PR_NUMBER must be an integer.");
+}
 
 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
 
-var mcpClient = await CreateMcpClientAsync(cts.Token);
-using var prFilesDoc = await GitHubMcp.ListPullRequestFilesAsync(mcpClient, owner, repo, prNumber, cts.Token);
+// ----------------------------
+// MCP-backed PR retrieval
+// ----------------------------
+await using var mcpClient = await CreateMcpClientAsync(cts.Token);
+using var prFilesDoc = await GitHubMcp.ListPullRequestFilesAsync(
+    mcpClient,
+    owner,
+    repo,
+    prNumber,
+    cts.Token);
 
 DiffTools.InitializeFromPullRequestFiles(prFilesDoc.RootElement);
-
-var syntheticDiff = BuildSyntheticUnifiedDiff(prFilesDoc.RootElement);
-var optimizedDiff = DiffContextOptimizer.BuildOptimizedContext(syntheticDiff);
 var fileInventory = DiffTools.ListChangedFiles(maxFiles: 250);
 var highRiskCandidates = DiffTools.GetTopRiskyFiles(maxFiles: 20);
 
+// ----------------------------
+// Agent instructions
+// ----------------------------
 var promptFile = Path.Combine(Directory.GetCurrentDirectory(), "ai", "prompts", "pr-diff-analysis.prompt.md");
 var instructions = await File.ReadAllTextAsync(promptFile, cts.Token);
-        
+
+// Keep the model-facing tool names stable.
+// The MCP server is the host-side retrieval boundary.
 AIAgent agent =
     new AzureOpenAIClient(new Uri(endpoint), new System.ClientModel.ApiKeyCredential(apiKey))
         .GetChatClient(deploymentName)
@@ -69,7 +87,7 @@ AIAgent agent =
 
 var prompt =
 $"""
-Analyze this pull request diff for code quality risks.
+Analyze this pull request for code quality risks.
 
 You already have a compact file inventory and high-risk candidates.
 If you need deeper context, use tools to fetch only targeted file diffs.
@@ -77,7 +95,7 @@ Prefer focused retrieval to minimize tokens while preserving accuracy.
 
 Call GetFileDiff when any of these are true:
 - You are about to report a medium/high issue and cannot cite changed lines precisely.
-- A high-risk file candidate is present but the relevant hunk is missing from the global excerpt.
+- A high-risk file candidate is present and you need exact patch context.
 - You suspect auth, input validation, or secret handling changes and need exact evidence.
 
 Do not paste or quote diff/code content in output fields.
@@ -98,21 +116,20 @@ Do not include markdown.
 var response = await agent.RunAsync(prompt, cancellationToken: cts.Token);
 
 // ----------------------------
-// Deterministic validation layer (Lesson 1 “self-critique” enforced by code)
+// Deterministic validation layer
 // ----------------------------
 try
 {
     using var doc = JsonDocument.Parse(response.Text);
-
     var root = doc.RootElement;
-    ResponseValidator.ValidateOrThrow(root);
 
+    ResponseValidator.ValidateOrThrow(root);
     Console.WriteLine(root.GetRawText());
 }
 catch (Exception ex)
 {
     Console.Error.WriteLine(ex);
-    // If JSON is invalid, emit safe fallback JSON (still deterministic).
+
     Console.WriteLine(JsonSerializer.Serialize(new
     {
         summary = "Agent returned invalid JSON",
@@ -126,7 +143,7 @@ catch (Exception ex)
                 severity = "medium",
                 category = "maintainability",
                 description = "The model response did not match the required schema.",
-                suggestedFix = "Tighten schema constraints and reduce diff size before inference."
+                suggestedFix = "Tighten schema constraints and reduce prompt size before inference."
             }
         },
         missingTests = new[]
@@ -137,72 +154,28 @@ catch (Exception ex)
     }, new JsonSerializerOptions { WriteIndented = true }));
 }
 
-static async Task<IMcpClient> CreateMcpClientAsync(CancellationToken ct)
+// ----------------------------
+// MCP helpers
+// ----------------------------
+static async Task<McpClient> CreateMcpClientAsync(CancellationToken ct)
 {
     var serverProject = Environment.GetEnvironmentVariable("MCP_SERVER_PROJECT")
         ?? "mcp/DevOps.McpServer";
 
-    return await McpClientFactory.CreateAsync(
-        new StdioClientTransport(new()
-        {
-            Name = "DevOps MCP Server",
-            Command = "dotnet",
-            Arguments = ["run", "--project", serverProject]
-        }),
-        cancellationToken: ct);
-}
-
-static string BuildSyntheticUnifiedDiff(JsonElement files)
-{
-    var blocks = new List<string>();
-
-    foreach (var file in files.EnumerateArray())
+    var clientTransport = new StdioClientTransport(new StdioClientTransportOptions
     {
-        var filePath = file.GetProperty("filename").GetString() ?? "unknown";
-        var patch = file.TryGetProperty("patch", out var patchEl) ? patchEl.GetString() ?? "" : "";
+        Name = "DevOps MCP Server",
+        Command = "dotnet",
+        Arguments = ["run", "--project", serverProject]
+    });
 
-        if (string.IsNullOrWhiteSpace(patch))
-            continue;
-
-        blocks.Add($"""
-        diff --git a/{filePath} b/{filePath}
-        --- a/{filePath}
-        +++ b/{filePath}
-        {patch}
-        """);
-    }
-
-    return string.Join("\n", blocks);
+    return await McpClient.CreateAsync(clientTransport, cancellationToken: ct);
 }
 
 static class GitHubMcp
 {
-    public static async Task<JsonDocument> GetPullRequestAsync(
-        IMcpClient client,
-        string owner,
-        string repo,
-        int number,
-        CancellationToken ct)
-    {
-        var result = await client.CallToolAsync(
-            "github_get_pull_request",
-            new Dictionary<string, object?>
-            {
-                ["owner"] = owner,
-                ["repo"] = repo,
-                ["number"] = number
-            },
-            cancellationToken: ct);
-
-        var raw = string.Join(
-            "\n",
-            result.Content.Select(c => c.ToString()));
-
-        return JsonDocument.Parse(raw);
-    }
-
     public static async Task<JsonDocument> ListPullRequestFilesAsync(
-        IMcpClient client,
+        McpClient client,
         string owner,
         string repo,
         int number,
@@ -218,76 +191,27 @@ static class GitHubMcp
             },
             cancellationToken: ct);
 
-        var raw = string.Join(
-            "\n",
-            result.Content.Select(c => c.ToString()));
+        var text = ExtractText(result);
 
-        return JsonDocument.Parse(raw);
+        return JsonDocument.Parse(text);
     }
-}
 
-static class DiffContextOptimizer
-{
-    private const int MaxChars = 90_000;
-    private const int MaxLines = 1_200;
-
-    public static string BuildOptimizedContext(string rawDiff)
+    private static string ExtractText(CallToolResult result)
     {
-        if (string.IsNullOrWhiteSpace(rawDiff))
+        var textBlocks = result.Content.OfType<TextContentBlock>().ToList();
+
+        if (textBlocks.Count == 0)
         {
-            return "[empty diff]";
+            throw new InvalidOperationException("MCP tool returned no text content.");
         }
 
-        var normalized = rawDiff.Replace("\r\n", "\n");
-        if (normalized.Length <= MaxChars)
-        {
-            return normalized;
-        }
-
-        var lines = normalized.Split('\n', StringSplitOptions.None);
-        var selected = new List<string>(capacity: Math.Min(lines.Length, MaxLines));
-        var changedLineCounter = 0;
-
-        foreach (var line in lines)
-        {
-            if (selected.Count >= MaxLines)
-            {
-                break;
-            }
-
-            var isMetadata = line.StartsWith("diff --git ", StringComparison.Ordinal)
-                             || line.StartsWith("+++ ", StringComparison.Ordinal)
-                             || line.StartsWith("--- ", StringComparison.Ordinal)
-                             || line.StartsWith("@@", StringComparison.Ordinal);
-
-            var isChangedLine = line.StartsWith("+", StringComparison.Ordinal) || line.StartsWith("-", StringComparison.Ordinal);
-
-            if (isMetadata || isChangedLine)
-            {
-                selected.Add(line);
-                if (isChangedLine)
-                {
-                    changedLineCounter++;
-                }
-            }
-        }
-
-        var compact = string.Join('\n', selected);
-        if (compact.Length > MaxChars)
-        {
-            compact = compact[..MaxChars] + "\n[...truncated...]";
-        }
-
-        return $"""
-[optimized diff context]
-selectedLines: {selected.Count}
-selectedChangedLines: {changedLineCounter}
-
-{compact}
-""";
+        return string.Join("\n", textBlocks.Select(t => t.Text));
     }
 }
 
+// ----------------------------
+// Response validation
+// ----------------------------
 static class ResponseValidator
 {
     private static readonly HashSet<string> AllowedOverallRisk = ["low", "medium", "high"];
@@ -389,6 +313,9 @@ static class ResponseValidator
     }
 }
 
+// ----------------------------
+// Local model-facing tools
+// ----------------------------
 static class DiffTools
 {
     private const int MaxResponseChars = 20_000;
@@ -422,7 +349,7 @@ static class DiffTools
         }
     }
 
-    [Description("List changed files with lightweight stats from the PR diff. Use this first before requesting file-level diff details.")]
+    [Description("List changed files with lightweight stats from the pull request. Use this first before requesting file-level diff details.")]
     public static string ListChangedFiles(
         [Description("Maximum number of files to return.")] int maxFiles = 200)
     {
@@ -466,15 +393,15 @@ static class DiffTools
         }
     }
 
-    [Description("Get the cached diff patch for a single file path from the PR files response.")]
+    [Description("Get the cached diff patch for a single file path from the pull request files response.")]
     public static string GetFileDiff(
-    [Description("Exact file path as returned by ListChangedFiles.")]
-    string filePath,
-    [Description("Maximum characters to return.")]
-    int maxChars = 12000)
+        [Description("Exact file path as returned by ListChangedFiles.")] string filePath,
+        [Description("Maximum characters to return.")] int maxChars = 12000)
     {
         if (string.IsNullOrWhiteSpace(filePath))
+        {
             return "{\"error\":\"filePath is required\"}";
+        }
 
         FileDiffEntry? entry;
 
@@ -487,7 +414,11 @@ static class DiffTools
         if (entry is null)
         {
             return SerializeToolPayloadWithCap(
-                new { error = "file not found in PR", requestedFile = filePath },
+                new
+                {
+                    error = "file not found in PR",
+                    requestedFile = filePath
+                },
                 "GetFileDiff");
         }
 
@@ -549,7 +480,6 @@ static class DiffTools
             : truncatedSerialized[..MaxResponseChars];
     }
 
-    
     private static int EstimateRiskScore(string filePath, int addedLines, int removedLines, int hunkCount)
     {
         var score = addedLines + removedLines + (hunkCount * 3);
@@ -560,12 +490,18 @@ static class DiffTools
             score += 40;
         }
 
-        if (normalizedPath.Contains("workflow") || normalizedPath.Contains("pipeline") || normalizedPath.Contains("infra") || normalizedPath.EndsWith(".bicep", StringComparison.Ordinal))
+        if (normalizedPath.Contains("workflow") ||
+            normalizedPath.Contains("pipeline") ||
+            normalizedPath.Contains("infra") ||
+            normalizedPath.EndsWith(".bicep", StringComparison.Ordinal))
         {
             score += 20;
         }
 
-        if (normalizedPath.EndsWith(".cs", StringComparison.Ordinal) || normalizedPath.EndsWith(".ts", StringComparison.Ordinal) || normalizedPath.EndsWith(".js", StringComparison.Ordinal) || normalizedPath.EndsWith(".py", StringComparison.Ordinal))
+        if (normalizedPath.EndsWith(".cs", StringComparison.Ordinal) ||
+            normalizedPath.EndsWith(".ts", StringComparison.Ordinal) ||
+            normalizedPath.EndsWith(".js", StringComparison.Ordinal) ||
+            normalizedPath.EndsWith(".py", StringComparison.Ordinal))
         {
             score += 10;
         }
@@ -579,6 +515,5 @@ static class DiffTools
         int AddedLines,
         int RemovedLines,
         int HunkCount,
-        int EstimatedRiskScore
-    );
+        int EstimatedRiskScore);
 }
