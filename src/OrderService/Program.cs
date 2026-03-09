@@ -29,6 +29,8 @@ app.MapGet("/api/products", () => Results.Ok(ProductEndpoints.GetProductNames())
 
 app.MapGet("/api/cart", () => Results.Ok(CartEndpoints.GetSampleCart()));
 
+app.MapGet("/api/checkout-summary", () => Results.Ok(CheckoutEndpoints.GetCheckoutSummary()));
+
 app.MapGet("/version", () =>
 {
     var version = typeof(Program).Assembly
@@ -90,4 +92,21 @@ public static class CartEndpoints
         new("Mouse", 2, 24.99m),
         new("Headset", 1, 79.50m)
     ];
+}
+
+public sealed record CheckoutSummaryResponse(int ItemCount, decimal Subtotal, decimal Shipping, decimal Tax, decimal Total);
+
+public static class CheckoutEndpoints
+{
+    public static CheckoutSummaryResponse GetCheckoutSummary()
+    {
+        var cartItems = CartEndpoints.GetSampleCart();
+        var itemCount = cartItems.Sum(item => item.Quantity);
+        var subtotal = cartItems.Sum(item => item.LineTotal);
+        var shipping = subtotal >= 100.00m ? 0.00m : 9.99m;
+        var tax = Math.Round(subtotal * 0.0825m, 2, MidpointRounding.AwayFromZero);
+        var total = subtotal + shipping + tax;
+
+        return new CheckoutSummaryResponse(itemCount, subtotal, shipping, tax, total);
+    }
 }
