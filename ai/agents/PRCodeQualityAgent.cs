@@ -5,9 +5,9 @@
 #:property TreatWarningsAsErrors=true
 #:property PublishAot=false
 
-#:package Azure.AI.OpenAI@2.3.0-beta.1
+#:package Azure.AI.OpenAI@2.8.0-beta.1
 #:package Azure.Identity@1.13.2
-#:package Microsoft.Agents.AI.OpenAI@1.0.0-rc1
+#:package Microsoft.Agents.AI.OpenAI@1.0.0-rc3
 #:package Microsoft.Extensions.AI@10.3.0
 #:package ModelContextProtocol@1.0.0
 
