@@ -41,6 +41,11 @@
       "Name": "Validation plan mentions endpoint/metric verification",
       "Passed": true,
       "Weight": 5
+    },
+    {
+      "Name": "Validation plan mentions endpoint/metric verification",
+      "Passed": true,
+      "Weight": 5
     }
   ]
 }
